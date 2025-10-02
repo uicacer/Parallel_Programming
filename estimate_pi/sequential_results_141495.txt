@@ -1,0 +1,15 @@
+==========================================
+SEQUENTIAL MATHEMATICAL PROCESSING PIPELINE
+==========================================
+Purpose: Establish performance baseline using 1 CPU core
+Approach: Process each number completely before moving to next
+
+=== Compiling Sequential Version ===
+=== SEQUENTIAL MONTE CARLO PI ESTIMATION ===
+Number of samples: 500000000 (500.0 million)
+
+Results:
+Estimated π: 3.1416881520
+Actual π:    3.1415926536
+Error:       0.0000954984
+Time:        7.2970 seconds
