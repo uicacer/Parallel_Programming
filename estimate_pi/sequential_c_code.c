@@ -1,3 +1,4 @@
+// sequential_pi.c
 // Monte Carlo π estimation using sequential processing
 // Throws random darts and counts how many fall inside a unit circle
 
