@@ -312,7 +312,7 @@ int main(int argc, char** argv) {
 }
 
 // =====================================================================
-// KEY MPI CONCEPTS SUMMARY FOR STUDENTS:
+// KEY MPI CONCEPTS SUMMARY:
 // =====================================================================
 //
 // 1. DISTRIBUTED MEMORY MODEL

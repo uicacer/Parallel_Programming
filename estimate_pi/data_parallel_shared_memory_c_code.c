@@ -1,281 +1,293 @@
-// Monte Carlo π estimation using OpenMP shared memory parallelism
-// Multiple threads work on different samples simultaneously
+// data_parallel_shared_memory_c_code.c
+// Monte Carlo π estimation using OpenMP (Shared Memory Parallelism)
+// Distributes work across multiple CPU cores on a SINGLE computer
 
-// =====================================================================
-// HEADER FILES (Libraries we need)
-// =====================================================================
-#include <stdio.h>   // Standard Input/Output: printf, etc.
-#include <stdlib.h>  // Standard Library: rand(), RAND_MAX, etc.
-#include <omp.h>     // OpenMP: Parallel programming functions
-#include <math.h>    // Math functions: fabs() for absolute value
-#include <time.h>    // Time functions: time() for random seed
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+#include <math.h>
+#include <omp.h>        // OpenMP library for parallel processing
+
+/*
+ * OPENMP PARALLEL PROGRAMMING MODEL:
+ * 
+ * What is OpenMP?
+ * - Open Multi-Processing: API for shared-memory parallel programming
+ * - Uses multiple THREADS on a single computer
+ * - All threads share the same memory space (can access same variables)
+ * - Ideal for parallelizing loops and independent computations
+ * 
+ * Key Concepts:
+ * - THREADS: Lightweight execution units within a single process
+ * - SHARED MEMORY: All threads can read/write to the same memory
+ * - PARALLEL REGION: Section of code executed by multiple threads
+ * - REDUCTION: Combining results from multiple threads safely
+ * 
+ * This program parallelizes Monte Carlo π estimation:
+ * - Each thread generates its own random points
+ * - Each thread counts points in its portion of work
+ * - Results are combined at the end (reduction)
+ */
 
 int main() {
     // =====================================================================
-    // PROBLEM SETUP
+    // CONFIGURATION
     // =====================================================================
     
-    const long NUM_SAMPLES = 500000000;  // Total dart throws (500 million)
-                                         // 'const' means this value cannot change
-                                         // 'long' is a data type for large integers
+    const long NUM_SAMPLES = 500000000;  // 500 million samples
+                                         // Same total work as sequential version
+                                         // Will be divided among threads
     
-    long count_inside = 0;               // Counter for darts inside circle
-                                         // Initially zero, will be incremented
-    
-    // Print information about what we're doing
-    printf("=== OPENMP MONTE CARLO PI ESTIMATION ===\n");
-    printf("Number of samples: %ld (%.1f million)\n", 
+    long count_inside = 0;               // Total points inside circle
+                                         // Will be updated by multiple threads
+                                         // (using atomic operations or reduction)
+
+    printf("=== OPENMP PARALLEL MONTE CARLO PI ESTIMATION ===\n");
+    printf("Number of samples: %ld (%.1f million)\n",
            NUM_SAMPLES, NUM_SAMPLES/1000000.0);
-    
-    // omp_get_max_threads() is an OpenMP function that returns
-    // how many threads (parallel workers) we can use
-    printf("Number of threads: %d\n", omp_get_max_threads());
-    
+
     // =====================================================================
-    // TIMING: Start measuring how long computation takes
+    // OPENMP CONFIGURATION
     // =====================================================================
     
-    // omp_get_wtime() is OpenMP's wall-clock timer function
-    // Returns current time in seconds as a decimal number
-    double start_time = omp_get_wtime();
-    
+    // Get the number of threads from environment variable OMP_NUM_THREADS
+    // This is typically set in the SLURM script or system environment
+    // Example: export OMP_NUM_THREADS=4
+    int num_threads = omp_get_max_threads();
+    printf("Number of OpenMP threads: %d\n", num_threads);
+    printf("Samples per thread: ~%ld\n\n", NUM_SAMPLES / num_threads);
+
     // =====================================================================
-    // OPENMP PARALLEL REGION: This is where parallelism happens
+    // PARALLEL MONTE CARLO SIMULATION
+    // This is where the magic happens!
     // =====================================================================
-    
-    // #pragma omp parallel - This is a COMPILER DIRECTIVE (not regular C code)
-    // It tells the compiler: "make this block run in parallel"
-    // 
-    // reduction(+:count_inside) - This is CRITICAL for correctness
-    // What it means:
-    // - Each thread gets its own PRIVATE copy of count_inside (starts at 0)
-    // - Each thread counts independently (no conflicts)
-    // - At the end, OpenMP AUTOMATICALLY adds all private counts together
-    // - The final sum goes into the original count_inside variable
-    //
-    // WITHOUT reduction: threads would interfere with each other (race condition)
-    // WITH reduction: threads work safely and results are combined correctly
+
+    double start_time = omp_get_wtime();  // OpenMP's high-precision wall clock timer
+
+    // ┌─────────────────────────────────────────────────────────────────┐
+    // │ OPENMP PARALLEL REGION                                          │
+    // │                                                                  │
+    // │ #pragma omp parallel: Creates a team of threads                │
+    // │ - Each thread executes the code block independently             │
+    // │ - Threads share the same memory space                           │
+    // │ - Work is distributed automatically                             │
+    // │                                                                  │
+    // │ reduction(+:count_inside): Safely combines results              │
+    // │ - Each thread has its own private copy of count_inside          │
+    // │ - At the end, all copies are summed together                    │
+    // │ - This avoids race conditions (multiple threads writing         │
+    // │   to the same variable simultaneously)                          │
+    // └─────────────────────────────────────────────────────────────────┘
     
     #pragma omp parallel reduction(+:count_inside)
     {
-        // INSIDE THE PARALLEL REGION:
-        // This code block is executed by MULTIPLE threads simultaneously
-        // If you have 4 threads, this entire block runs 4 times at once
+        // ================================================================
+        // THREAD-LOCAL VARIABLES
+        // Each thread gets its own copy of these variables
+        // ================================================================
         
-        // ----------------------------------------------------------------
-        // THREAD-SPECIFIC RANDOM NUMBER SETUP
-        // ----------------------------------------------------------------
+        // Get this thread's unique ID (0, 1, 2, 3, etc.)
+        int thread_id = omp_get_thread_num();
         
-        // IMPORTANT CONCEPT: Random Number Generators Need Unique Seeds
-        // If all threads use the same seed, they generate IDENTICAL random numbers!
-        // This would give us wrong results (not truly random sampling)
+        // Seed random number generator differently for each thread
+        // This ensures different random sequences per thread
+        // Using thread_id + time ensures uniqueness
+        unsigned int seed = time(NULL) + thread_id;
         
-        // omp_get_thread_num() returns this thread's ID number (0, 1, 2, 3...)
-        // time(NULL) returns current time in seconds since 1970 (a large number)
-        // Adding them together gives each thread a UNIQUE seed
-        unsigned int seed = omp_get_thread_num() + time(NULL);
+        // ================================================================
+        // PARALLEL FOR LOOP
+        // Work is automatically divided among threads
+        // ================================================================
         
-        // EXAMPLE: If time(NULL) = 1234567890
-        // Thread 0 gets seed = 0 + 1234567890 = 1234567890
-        // Thread 1 gets seed = 1 + 1234567890 = 1234567891
-        // Thread 2 gets seed = 2 + 1234567890 = 1234567892
-        // Thread 3 gets seed = 3 + 1234567890 = 1234567893
+        // #pragma omp for: Distributes loop iterations across threads
+        // - OpenMP automatically divides NUM_SAMPLES iterations
+        // - Each thread processes its assigned chunk
+        // - schedule(static): Divides iterations into equal-sized chunks
+        //   Example with 4 threads and 1000 iterations:
+        //   - Thread 0: iterations 0-249
+        //   - Thread 1: iterations 250-499
+        //   - Thread 2: iterations 500-749
+        //   - Thread 3: iterations 750-999
         
-        // ----------------------------------------------------------------
-        // PARALLEL FOR LOOP: Divide work among threads
-        // ----------------------------------------------------------------
-        
-        // #pragma omp for - Another compiler directive
-        // Tells OpenMP: "divide loop iterations among threads"
-        // 
-        // HOW IT DIVIDES WORK (with 4 threads and 500 million samples):
-        // Thread 0: iterations 0 to 124,999,999 (125 million samples)
-        // Thread 1: iterations 125,000,000 to 249,999,999 (125 million)
-        // Thread 2: iterations 250,000,000 to 374,999,999 (125 million)
-        // Thread 3: iterations 375,000,000 to 499,999,999 (125 million)
-        //
-        // Each thread does its portion SIMULTANEOUSLY (in parallel)
-        
-        #pragma omp for
+        #pragma omp for schedule(static)
         for (long i = 0; i < NUM_SAMPLES; i++) {
-            // EACH THREAD EXECUTES THIS LOOP BODY for its assigned iterations
             
-            // ----------------------------------------------------------------
-            // STEP 1: Generate random point coordinates
-            // ----------------------------------------------------------------
-            
-            // rand_r(&seed) is a THREAD-SAFE random number generator
-            //
-            // ═══════════════════════════════════════════════════════════════
-            // WHAT DOES "THREAD-SAFE" MEAN? (DETAILED EXPLANATION)
-            // ═══════════════════════════════════════════════════════════════
-            //
-            // ANALOGY: Imagine a shared bank account vs individual accounts
-            //
-            // NOT THREAD-SAFE (like rand()):
-            // - All threads share ONE random number generator (like one bank account)
-            // - Generator has internal state that gets updated with each call
-            // - When multiple threads call rand() simultaneously:
-            //   
-            //   Time 1: Thread 1 reads state → calculates → about to update state
-            //   Time 2: Thread 2 reads SAME state → calculates → updates state
-            //   Time 3: Thread 1 updates state (but based on OLD reading!)
-            //   
-            //   Result: STATE GETS CORRUPTED! Numbers aren't truly random anymore
-            //   This is called a RACE CONDITION (threads "race" to update shared data)
-            //
-            // THREAD-SAFE (like rand_r()):
-            // - Each thread has its OWN random number generator (like individual bank accounts)
-            // - Each thread passes its own seed using &seed
-            // - The '&' means "address of" - telling rand_r where THIS thread's seed is stored
-            // - Each thread's seed is stored in a different memory location
-            // - Threads never interfere with each other's seeds
-            //
-            // VISUAL COMPARISON:
-            //
-            // rand() - NOT SAFE:
-            //   Thread 1 ──┐
-            //   Thread 2 ──┼──► SHARED Generator ──► CONFLICTS!
-            //   Thread 3 ──┘    (all updating same state)
-            //
-            // rand_r() - SAFE:
-            //   Thread 1 ──► Generator with seed1 ──► No conflicts
-            //   Thread 2 ──► Generator with seed2 ──► Independent
-            //   Thread 3 ──► Generator with seed3 ──► Separate
-            //
-            // WHY THIS MATTERS:
-            // - Using rand() would give wrong π estimates (corrupted randomness)
-            // - Using rand_r() gives correct π estimates (true randomness per thread)
-            //
-            // SYNTAX: rand_r(&seed)
-            // - rand_r is the function name
-            // - &seed means "the memory address where my seed is stored"
-            // - Each thread has 'seed' stored in different memory location
-            // - So each thread's random numbers are independent
-            //
-            // ═══════════════════════════════════════════════════════════════
-            
-            // Now generate random x coordinate in range [-1, 1]
-            // TRANSFORMATION BREAKDOWN:
-            // rand_r(&seed) → random integer [0, RAND_MAX]
-            // (double)rand_r(&seed) / RAND_MAX → convert to [0.0, 1.0]
-            // * 2.0 → scale to [0.0, 2.0]
-            // - 1.0 → shift to [-1.0, 1.0]
-            
+            // Generate random point (x, y) in range [-1, 1] × [-1, 1]
+            // Using rand_r() instead of rand() for thread-safety
+            // rand_r() takes a seed pointer, allowing each thread
+            // to maintain its own random number sequence
             double x = (double)rand_r(&seed) / RAND_MAX * 2.0 - 1.0;
             double y = (double)rand_r(&seed) / RAND_MAX * 2.0 - 1.0;
-            
-            // Now we have a random point (x, y) somewhere in the square
-            // from -1 to 1 on both axes
-            
-            // ----------------------------------------------------------------
-            // STEP 2: Check if point is inside the unit circle
-            // ----------------------------------------------------------------
-            
-            // Circle equation: x² + y² ≤ 1
-            // If distance from origin ≤ 1, point is inside circle
-            
+
+            // Calculate squared distance from origin
+            // Point is inside unit circle if x² + y² ≤ 1
             double distance_squared = x * x + y * y;
-            
-            // ----------------------------------------------------------------
-            // STEP 3: Count if inside circle
-            // ----------------------------------------------------------------
-            
+
+            // Check if point is inside circle
             if (distance_squared <= 1.0) {
-                // Point is inside the circle!
-                
-                // count_inside++ means: count_inside = count_inside + 1
-                // 
-                // THREAD SAFETY: This is safe because of reduction(+:count_inside)
-                // Each thread increments its OWN private copy
-                // No conflicts between threads
-                // At the end of parallel region, all counts are added together
-                
-                count_inside++;
+                count_inside++;  // Safe because of reduction clause
+                                // Each thread increments its private copy
             }
-            // If distance_squared > 1.0, point is outside, don't count it
         }
-        // End of parallel for loop
         
-    }
-    // End of parallel region
-    // 
-    // AUTOMATIC ACTIONS BY OPENMP AT THIS POINT:
-    // 1. Wait for all threads to finish (barrier/synchronization)
-    // 2. Add up all the private count_inside values from each thread
-    // 3. Store the total in the original count_inside variable
-    // 4. All threads terminate, back to single-threaded execution
-    
+        // ================================================================
+        // IMPLICIT BARRIER
+        // All threads wait here until everyone finishes their work
+        // Then OpenMP automatically combines all count_inside values
+        // ================================================================
+        
+    } // End of parallel region - reduction happens here automatically
+
+    double end_time = omp_get_wtime();  // Stop timing
+
     // =====================================================================
-    // TIMING: Stop measuring time
+    // CALCULATE AND DISPLAY RESULTS
     // =====================================================================
-    
-    double end_time = omp_get_wtime();           // Get end time
-    double elapsed_time = end_time - start_time; // Calculate duration
-    
-    // =====================================================================
-    // CALCULATE PI ESTIMATE
-    // =====================================================================
-    
-    // Formula: π ≈ 4 × (points inside circle) / (total points)
-    // 
-    // Why 4.0 and not 4?
-    // - 4.0 is a double (floating-point number)
-    // - Using 4.0 ensures floating-point division (keeps decimal places)
-    // - If we used 4, it would be integer division (truncates decimals)
-    
+
+    double elapsed_time = end_time - start_time;
+
+    // Estimate π using Monte Carlo formula
     double pi_estimate = 4.0 * count_inside / NUM_SAMPLES;
-    
-    // Calculate error: How far off are we from actual π?
-    // M_PI is a constant defined in <math.h> = 3.14159265358979323846...
-    // fabs() returns absolute value (always positive)
+
+    // Calculate error
     double error = fabs(pi_estimate - M_PI);
-    
+    double percent_error = (error / M_PI) * 100.0;
+
     // =====================================================================
-    // DISPLAY RESULTS
+    // OUTPUT RESULTS
     // =====================================================================
     
-    printf("\nResults:\n");
-    printf("Estimated π: %.10f\n", pi_estimate);  // %.10f = 10 decimal places
-    printf("Actual π:    %.10f\n", M_PI);
-    printf("Error:       %.10f\n", error);
-    printf("Time:        %.4f seconds\n", elapsed_time);  // %.4f = 4 decimal places
-    
-    return 0;  // Program finished successfully
+    printf("=== RESULTS ===\n");
+    printf("Points inside circle: %ld\n", count_inside);
+    printf("Total points tested:  %ld\n", NUM_SAMPLES);
+    printf("Ratio (inside/total): %.10f\n", (double)count_inside / NUM_SAMPLES);
+    printf("\n");
+    printf("Estimated π:          %.10f\n", pi_estimate);
+    printf("Actual π:             %.10f\n", M_PI);
+    printf("Absolute error:       %.10f\n", error);
+    printf("Percent error:        %.6f%%\n", percent_error);
+    printf("\n");
+    printf("Computation time:     %.2f seconds\n", elapsed_time);
+    printf("Samples per second:   %.2f million\n", 
+           (NUM_SAMPLES / elapsed_time) / 1000000.0);
+    printf("\n");
+    printf("Speedup vs sequential: Compare with sequential_results.txt\n");
+    printf("Efficiency:            Speedup / num_threads = parallel efficiency\n");
+
+    return 0;
 }
 
-// =====================================================================
-// KEY OPENMP CONCEPTS SUMMARY FOR STUDENTS:
-// =====================================================================
-//
-// 1. #pragma omp parallel
-//    - Creates multiple threads that run simultaneously
-//    - Code inside {...} executes on all threads at once
-//
-// 2. #pragma omp for
-//    - Divides loop iterations among threads
-//    - Each thread gets a portion of iterations
-//
-// 3. reduction(+:variable)
-//    - Each thread gets private copy of variable
-//    - Threads work independently (no conflicts)
-//    - At end, private copies are combined using specified operation (+)
-//
-// 4. Thread-safe functions
-//    - rand_r() instead of rand() (each thread uses its own seed)
-//    - Thread-safe = multiple threads can use it simultaneously without conflicts
-//    - omp_get_thread_num() returns thread ID (0, 1, 2, ...)
-//    - omp_get_max_threads() returns total number of threads
-//    - omp_get_wtime() returns wall-clock time for timing
-//
-// 5. Shared vs Private variables
-//    - Variables declared OUTSIDE parallel region = SHARED (all threads see same copy)
-//    - Variables declared INSIDE parallel region = PRIVATE (each thread gets own copy)
-//    - reduction() clause makes variable start private, then combines at end
-//
-// 6. Race Conditions
-//    - Occur when multiple threads access shared data without protection
-//    - Can cause incorrect results, crashes, or unpredictable behavior
-//    - Avoided by: reduction(), private variables, or thread-safe functions
-//
-// =====================================================================
+/*
+ * ============================================================================
+ * OPENMP COMPILATION AND EXECUTION
+ * ============================================================================
+ * 
+ * Compilation:
+ *   gcc -fopenmp -o program data_parallel_shared_memory_c_code.c -lm
+ *   
+ *   -fopenmp: Enables OpenMP support
+ *   -lm: Links math library (for M_PI constant)
+ * 
+ * Execution:
+ *   export OMP_NUM_THREADS=4    # Set number of threads
+ *   ./program
+ * 
+ * Or in SLURM script:
+ *   #SBATCH --cpus-per-task=4
+ *   export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
+ *   ./program
+ * 
+ * ============================================================================
+ * KEY OPENMP DIRECTIVES EXPLAINED
+ * ============================================================================
+ * 
+ * #pragma omp parallel
+ *   - Creates a team of threads
+ *   - All threads execute the code block
+ *   - Number of threads set by OMP_NUM_THREADS
+ * 
+ * reduction(+:variable)
+ *   - Each thread gets private copy of variable
+ *   - At end, all copies are combined using + operator
+ *   - Thread-safe way to accumulate results
+ *   - Avoids race conditions
+ * 
+ * #pragma omp for
+ *   - Distributes loop iterations across threads
+ *   - Must be inside a parallel region
+ *   - Automatic load balancing
+ * 
+ * schedule(static)
+ *   - Divides iterations into equal-sized chunks at compile time
+ *   - Each thread gets a contiguous block of iterations
+ *   - Good for uniform workload (like this program)
+ *   - Alternative: schedule(dynamic) for uneven workloads
+ * 
+ * ============================================================================
+ * THREAD SAFETY CONSIDERATIONS
+ * ============================================================================
+ * 
+ * Why rand_r() instead of rand()?
+ *   - rand() uses global state (not thread-safe)
+ *   - Multiple threads calling rand() simultaneously causes race conditions
+ *   - rand_r() takes a seed pointer, each thread has its own seed
+ *   - Result: Each thread has independent random number sequence
+ * 
+ * Why reduction for count_inside?
+ *   - Without reduction: Multiple threads writing to same variable = race condition
+ *   - Race condition example:
+ *     Thread 1 reads count_inside (100)
+ *     Thread 2 reads count_inside (100) ← Same value!
+ *     Thread 1 writes 101
+ *     Thread 2 writes 101 ← Should be 102!
+ *   - Reduction creates private copies, then safely combines them
+ * 
+ * ============================================================================
+ * PERFORMANCE EXPECTATIONS
+ * ============================================================================
+ * 
+ * Ideal speedup with N threads: N× faster than sequential
+ *   - 4 threads: 4× speedup
+ *   - 8 threads: 8× speedup
+ * 
+ * Reality: Usually 0.8N to 0.95N speedup due to:
+ *   - Thread creation/synchronization overhead
+ *   - Memory bandwidth limitations
+ *   - Cache effects
+ * 
+ * This algorithm is "embarrassingly parallel":
+ *   - No dependencies between iterations
+ *   - Minimal communication between threads
+ *   - Should achieve near-linear speedup
+ * 
+ * Example with 4 threads on 4 cores:
+ *   - Sequential time: 10 seconds
+ *   - Parallel time: ~2.5-2.7 seconds
+ *   - Speedup: 3.7-4.0× (excellent!)
+ * 
+ * ============================================================================
+ * SHARED MEMORY vs DISTRIBUTED MEMORY
+ * ============================================================================
+ * 
+ * OpenMP (Shared Memory) - THIS PROGRAM:
+ *   ✓ Multiple threads on ONE computer
+ *   ✓ All threads share same memory
+ *   ✓ Fast communication (direct memory access)
+ *   ✓ Limited by single machine's resources
+ *   ✓ Easiest to program and debug
+ *   - Best for: Single-node parallelism
+ * 
+ * MPI (Distributed Memory) - See dist_memory version:
+ *   ✓ Multiple processes across MULTIPLE computers
+ *   ✓ Each process has separate memory
+ *   ✓ Communication via message passing (slower)
+ *   ✓ Can scale to thousands of nodes
+ *   ✓ More complex programming model
+ *   - Best for: Multi-node, large-scale parallelism
+ * 
+ * Hybrid (MPI + OpenMP) - See hybrid version:
+ *   ✓ MPI processes across multiple nodes
+ *   ✓ OpenMP threads within each node
+ *   ✓ Best of both worlds
+ *   - Best for: Maximum performance on clusters
+ */
