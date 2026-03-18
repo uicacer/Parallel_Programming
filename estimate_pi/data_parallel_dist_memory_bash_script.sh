@@ -20,7 +20,7 @@
 #   --nodes=4 → Use 4 different physical computers
 #   --nodes=1 → Use only 1 computer (not typical for MPI)
 
-#SBATCH --ntasks-per-node=1
+#SBATCH --ntasks-per-node=4
 # Number of MPI processes to run ON EACH NODE
 # This is the KEY parameter that determines your total parallelism!
 #
